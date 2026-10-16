@@ -1,0 +1,38 @@
+name: Build Android
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      KS: ${{ secrets.KEYSTORE_B64 }}
+    defaults:
+      run:
+        working-directory: cliphunter-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm install && npx cap sync android
+      - run: chmod +x android/gradlew
+      - name: Debug APK
+        run: cd android && ./gradlew assembleDebug
+      - name: Release AAB
+        if: ${{ env.KS != '' }}
+        run: |
+          cd android && ./gradlew bundleRelease
+          echo "$KS" | base64 -d > $RUNNER_TEMP/release.jks
+          jarsigner -keystore $RUNNER_TEMP/release.jks -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" app/build/outputs/bundle/release/app-release.aab "${{ secrets.KEY_ALIAS }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cliphunter-builds
+          path: |
+            cliphunter-app/android/app/build/outputs/apk/debug/*.apk
+            cliphunter-app/android/app/build/outputs/bundle/release/*.aab
