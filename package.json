@@ -1,4 +1,0 @@
-{"name":"cliphunter","version":"1.0.0","private":true,
-"scripts":{"sync":"cap sync android","open":"cap open android"},
-"dependencies":{"@capacitor/android":"^7.0.0","@capacitor/core":"^7.0.0","@capacitor/filesystem":"^7.0.0","@capacitor/share":"^7.0.0"},
-"devDependencies":{"@capacitor/cli":"^7.0.0"}}
