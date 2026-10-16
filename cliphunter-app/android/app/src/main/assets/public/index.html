@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ClipHunter</title>
+<style>
+:root{--bg:#f6f5f2;--cd:#fff;--tx:#17171a;--mu:#6b6b76;--bd:#e3e1db;--ac:#e5484d;--a:#3b82f6;--s:#a855f7;--i:#ef4444;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e0e11;--cd:#1a1a20;--tx:#f0f0f3;--mu:#9a9aa6;--bd:#2c2c35;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0e0e11;--cd:#1a1a20;--tx:#f0f0f3;--mu:#9a9aa6;--bd:#2c2c35;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:640px;margin:0 auto;padding:18px 16px 40px}
+h1{margin:0;font-size:26px;letter-spacing:-.5px}
+.mu{color:var(--mu);font-size:13px;margin:4px 0 14px}
+.btn{display:block;width:100%;padding:14px;border-radius:12px;border:1px solid var(--bd);background:var(--cd);color:var(--tx);font:600 15px inherit;text-align:center;cursor:pointer}
+.pri{background:var(--ac);color:#fff;border:0;margin-top:10px}
+.pri:disabled{opacity:.4}
+.set{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
+.set label{font-size:12px;color:var(--mu);display:flex;flex-direction:column;gap:4px}
+select{padding:9px 6px;border-radius:8px;border:1px solid var(--bd);background:var(--cd);color:var(--tx);font-size:14px}
+.bar{height:6px;border-radius:3px;background:var(--bd);overflow:hidden;margin:8px 0}
+.bar i{display:block;height:100%;background:var(--ac);width:0}
+video{width:100%;border-radius:12px;background:#000;margin-top:12px;max-height:50vh}
+#tl{width:100%;height:60px;border-radius:8px;margin-top:10px;background:var(--cd);border:1px solid var(--bd);touch-action:none}
+#chips{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}
+.chip{padding:7px 12px;border-radius:99px;border:1px solid var(--bd);background:var(--cd);color:var(--tx);font-size:13px;cursor:pointer}
+.chip.on{background:var(--tx);color:var(--bg)}
+.card{background:var(--cd);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:10px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.tag{font-size:12px;font-weight:700;color:#fff;padding:3px 9px;border-radius:99px}
+.audio{background:var(--a)}.slow{background:var(--s)}.intense{background:var(--i)}
+.card .btn{padding:9px;font-size:13px}
+.card .row:last-child{margin-top:8px}
+.card .row:last-child .btn{flex:1}
+.fine{font-size:12px;color:var(--mu);margin-top:18px}
+</style></head><body><main>
+<h1>ClipHunter</h1>
+<p class="mu">Finds the best short moments in long videos. Everything runs on your device; nothing is uploaded.</p>
+<label class="btn" for="file">🎞 Choose a video</label><input id="file" type="file" accept="video/*" hidden>
+<div class="set">
+<label>Clip length<select id="len"><option value="10">10 s<option value="15" selected>15 s<option value="30">30 s<option value="45">45 s</select></label>
+<label>Clips per type<select id="cnt"><option>3<option selected>5<option>8</select></label>
+<label>Scan speed<select id="spd"><option value="8">Fast 8×<option value="4" selected>Balanced 4×<option value="2">Precise 2×</select></label>
+<label>Sensitivity<select id="sen"><option value=".4">Strict<option value=".3" selected>Normal<option value=".2">Loose</select></label>
+</div>
+<button id="go" class="btn pri" disabled>Find clips</button>
+<div id="prog" hidden><div class="bar"><i id="pb"></i></div></div>
+<p id="msg" class="mu"></p>
+<video id="pv" controls playsinline hidden></video>
+<canvas id="tl" hidden></canvas>
+<div id="chips" hidden>
+<button class="chip on" data-f="all">All</button><button class="chip" data-f="audio">Music shifts</button><button class="chip" data-f="slow">Slow-mo</button><button class="chip" data-f="intense">Intense</button><button class="chip" id="sa">Save all</button><button class="chip" id="cp">Copy timestamps</button>
+</div>
+<div id="list"></div>
+<p class="fine">Keep the screen on while scanning. Detection is heuristic: loudness changes come from the audio track, slow-motion from sustained smooth low motion after faster action, intensity from motion, cuts and loudness. Saving clips records in real time and needs Chrome, Edge or Firefox; on iPhone Safari you still get the timestamps and preview.</p>
+</main>
+<script>
+const $=s=>document.querySelector(s),clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const fmt=t=>{t=Math.round(t);const h=t/3600|0,m=(t%3600)/60|0,s=t%60,p=n=>String(n).padStart(2,'0');return(h?h+':':'')+p(m)+':'+p(s)};
+const once=(el,ev)=>new Promise(r=>el.addEventListener(ev,r,{once:true}));
+const LBL={audio:'Music shift',slow:'Slow-motion',intense:'Intense'};
+let file,url,dur,clips=[],filter='all',stopAt=0,S={};
+const pv=$('#pv'),msg=t=>$('#msg').textContent=t;
+
+$('#file').onchange=e=>{
+  file=e.target.files[0];if(!file)return;
+  if(url)URL.revokeObjectURL(url);
+  url=URL.createObjectURL(file);pv.src=url;pv.hidden=false;
+  $('#tl').hidden=true;$('#chips').hidden=true;$('#list').innerHTML='';
+  pv.onloadedmetadata=()=>{dur=pv.duration;$('#go').disabled=false;msg(file.name+' · '+fmt(dur))};
+};
+pv.ontimeupdate=()=>{if(stopAt&&pv.currentTime>=stopAt){pv.pause();stopAt=0}};
+
+const smooth=(a,w)=>{const o=new Float32Array(a.length);for(let i=0;i<a.length;i++){let s=0,c=0;for(let j=i-w;j<=i+w;j++)if(j>=0&&j<a.length){s+=a[j];c++}o[i]=s/c}return o};
+const pct=(a,p)=>{const b=Array.from(a).sort((x,y)=>x-y);return b[Math.floor(p*(b.length-1))]||0};
+const norm=a=>{const lo=pct(a,.1),hi=pct(a,.95),d=(hi-lo)||1;return a.map(x=>clamp((x-lo)/d))};
+const mean=(a,i,j)=>{let s=0,c=0;for(let k=Math.max(0,i);k<=Math.min(a.length-1,j);k++){s+=a[k];c++}return c?s/c:0};
+
+$('#go').onclick=async()=>{
+  const btn=$('#go');btn.disabled=true;$('#prog').hidden=false;$('#pb').style.width='0';
+  try{navigator.wakeLock&&navigator.wakeLock.request('screen').catch(()=>{})}catch(e){}
+  const N=Math.ceil(dur),spd=+$('#spd').value;
+  const A=new Float32Array(N).fill(-90);let hasA=false;
+  msg('Reading audio…');
+  try{
+    const ac=new(window.AudioContext||window.webkitAudioContext)();
+    const buf=await ac.decodeAudioData(await file.arrayBuffer());ac.close();
+    const ch=buf.getChannelData(0),sr=buf.sampleRate;
+    for(let s=0;s<N;s++){let sum=0,c=0;const a=Math.floor(s*sr),b=Math.min(ch.length,Math.floor((s+1)*sr));
+      for(let i=a;i<b;i+=8){sum+=ch[i]*ch[i];c++}
+      A[s]=c?10*Math.log10(sum/c+1e-9):-90}
+    hasA=true;
+  }catch(e){msg('Audio could not be decoded (file too large or no audio). Using visuals only…')}
+  // visual pass
+  const M=new Float32Array(N),D=new Float32Array(N),C=new Float32Array(N),K=new Uint16Array(N);
+  const v=document.createElement('video');v.muted=true;v.playsInline=true;v.preload='auto';
+  v.style.cssText='position:fixed;width:2px;height:2px;opacity:0;pointer-events:none';
+  document.body.appendChild(v);v.src=url;await once(v,'loadeddata');
+  const cv=document.createElement('canvas');cv.width=48;cv.height=27;
+  const cx=cv.getContext('2d',{willReadFrequently:true});
+  let prev=null,last=-1,n=0;const t0=Date.now();
+  const proc=t=>{
+    cx.drawImage(v,0,0,48,27);const d=cx.getImageData(0,0,48,27).data;
+    const g=new Float32Array(1296);for(let i=0;i<1296;i++)g[i]=d[4*i]*.3+d[4*i+1]*.59+d[4*i+2]*.11;
+    if(prev&&t>last){
+      let df=0,dt=0;for(let i=0;i<1296;i++){df+=Math.abs(g[i]-prev[i]);if(i%48<47)dt+=Math.abs(g[i]-g[i+1])}
+      df/=1296;dt/=1296;
+      const gap=Math.max(t-last,1/60),sec=Math.min(N-1,t|0);
+      M[sec]+=df/(gap*30);D[sec]+=dt;K[sec]++;
+      if(df>42&&gap<.25)C[sec]++;
+    }
+    prev=g;last=t;
+    if(++n%20===0){const p=clamp(t/dur);$('#pb').style.width=p*100+'%';
+      const el=(Date.now()-t0)/1000;msg(`Scanning ${fmt(t)} / ${fmt(dur)} · ~${fmt(p>.02?el/p-el:0)} left`)}
+  };
+  v.playbackRate=spd;
+  await new Promise(res=>{
+    const tick=(_,m)=>{proc(m?m.mediaTime:v.currentTime);if(!v.ended)(v.requestVideoFrameCallback?v.requestVideoFrameCallback(tick):requestAnimationFrame(()=>tick()))};
+    v.onended=res;v.onerror=res;
+    v.play().then(()=>tick(0,null)).catch(()=>{msg('Browser blocked scanning playback. Tap Find clips again.');res()});
+  });
+  v.remove();
+  for(let s=0;s<N;s++)if(K[s]){M[s]/=K[s];D[s]/=K[s]}
+  $('#prog').hidden=true;
+  S={A,M,D,C,hasA,N};
+  analyzeScores();
+  btn.disabled=false;
+};
+
+function analyzeScores(){
+  const{A,M,D,C,hasA,N}=S,len=+$('#len').value,cnt=+$('#cnt').value;
+  const nM=norm(smooth(M,2)),nD=norm(D),nC=norm(smooth(C,2)),nA=norm(smooth(A,2));
+  const med=pct(M,.5)||1;
+  // audio change: next 2s vs previous 6s
+  const delta=new Float32Array(N);
+  for(let s=0;s<N;s++){
+    const a=mean(A,s,s+2),b=mean(A,s-6,s-1);
+    delta[s]=(hasA&&Math.max(a,b)>-55)?a-b:0;
+  }
+  const ad=smooth(delta.map(Math.abs),1),aN=ad.map(x=>clamp(x/(pct(ad,.98)||1)));
+  const audio=hasA?aN:new Float32Array(N);
+  // intense
+  const intense=new Float32Array(N);
+  for(let s=0;s<N;s++)intense[s]=.5*nM[s]+.25*nC[s]+.25*(hasA?nA[s]:nM[s]);
+  // slow-mo
+  const slow=new Float32Array(N);
+  for(let s=0;s<N;s++){
+    const calm=1-nM[s],ctx=clamp(mean(nM,s-8,s-1)-nM[s]),
+      alive=Math.min(1,M[s]/(.25*med)),pen=clamp(nC[s]*2);
+    const drop=hasA?clamp(-delta[s]/12):0;
+    slow[s]=clamp(calm*nD[s]*alive*(.4+.6*ctx)*(1-pen)+.15*drop);
+  }
+  const slowS=smooth(slow,2),intS=smooth(intense,1);
+  const pick=(sc,k,pre,note)=>{
+    const out=[],used=[],idx=[...sc.keys()].sort((a,b)=>sc[b]-sc[a]);
+    for(const i of idx){
+      if(out.length>=cnt||sc[i]<+$("#sen").value)break;
+      if(used.some(u=>Math.abs(u-i)<len))continue;used.push(i);
+      const s=clamp(i-len*pre,0,Math.max(0,dur-len));
+      out.push({k,i,s,e:Math.min(dur,s+len),sc:sc[i],note:note?note(i):''});
+    }return out};
+  clips=[...pick(audio,'audio',.4,i=>{const d=delta[i];return(d>0?'Louder +':'Weaker −')+Math.abs(d).toFixed(0)+' dB'}),
+    ...pick(slowS,'slow',.5,()=>'smooth low-motion segment'),
+    ...pick(intS,'intense',.5,()=>'high motion & cuts')];
+  S.rows=[audio,slowS,intS];
+  msg(clips.length?`Found ${clips.length} clips. Tap a card to preview.`:'No strong moments found. Try a shorter scan step or another video.');
+  $('#chips').hidden=false;$('#tl').hidden=false;drawTL();render();
+}
+
+function drawTL(){
+  const c=$('#tl'),w=c.clientWidth,h=60,dp=devicePixelRatio||1;
+  c.width=w*dp;c.height=h*dp;const x=c.getContext('2d');x.scale(dp,dp);x.clearRect(0,0,w,h);
+  const cols=['#3b82f6','#a855f7','#ef4444'];
+  S.rows.forEach((r,ri)=>{
+    for(let px=0;px<w;px++){
+      const a=Math.floor(px/w*S.N),b=Math.max(a+1,Math.floor((px+1)/w*S.N));let m=0;
+      for(let k=a;k<b&&k<S.N;k++)m=Math.max(m,r[k]);
+      x.globalAlpha=.12+.88*m;x.fillStyle=cols[ri];x.fillRect(px,4+ri*18,1,14);
+    }
+  });
+  x.globalAlpha=1;x.strokeStyle=getComputedStyle(document.body).color;x.lineWidth=1.5;
+  clips.forEach(cl=>{x.strokeRect(cl.s/dur*w,1,Math.max(2,(cl.e-cl.s)/dur*w),58)});
+  c.onclick=e=>{const t=e.offsetX/w*dur;pv.currentTime=t;pv.scrollIntoView({behavior:'smooth',block:'center'})};
+}
+
+function render(){
+  const L=$('#list');L.innerHTML='';
+  clips.filter(c=>filter==='all'||c.k===filter).sort((a,b)=>a.s-b.s).forEach(c=>{
+    const d=document.createElement('div');d.className='card';
+    d.innerHTML=`<div class="row"><span class="tag ${c.k}">${LBL[c.k]}</span><b>${fmt(c.s)} – ${fmt(c.e)}</b></div>
+<div class="mu" style="margin:6px 0 0">${c.note} · score ${Math.round(c.sc*100)}</div>
+<div class="bar"><i style="width:${c.sc*100}%"></i></div>
+<div class="row"><button class="btn" data-a="p">▶ Preview</button><button class="btn" data-a="s">⬇ Save clip</button></div>`;
+    d.querySelector('[data-a=p]').onclick=()=>{pv.currentTime=c.s;stopAt=c.e;pv.play();pv.scrollIntoView({behavior:'smooth',block:'center'})};
+    d.querySelector('[data-a=s]').onclick=e=>save(c,e.target);
+    L.appendChild(d);
+  });
+}
+document.querySelectorAll('.chip[data-f]').forEach(b=>b.onclick=()=>{
+  filter=b.dataset.f;document.querySelectorAll('.chip[data-f]').forEach(x=>x.classList.toggle('on',x===b));render()});
+$('#sa').onclick=async()=>{for(const c of clips.slice().sort((a,b)=>a.s-b.s))await save(c,{})};
+$('#cp').onclick=()=>{
+  const t=clips.slice().sort((a,b)=>a.s-b.s).map(c=>`${fmt(c.s)}-${fmt(c.e)} ${LBL[c.k]} ${c.note}`).join('\n');
+  (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>msg('Timestamps copied.'),()=>prompt('Copy:',t));
+};
+
+async function save(c,btn){
+  const cap=pv.captureStream||pv.mozCaptureStream;
+  if(!cap||!window.MediaRecorder){alert('This browser cannot record clips. Use the timestamps with any video editor, or open this page in Chrome.');return}
+  const old=btn.textContent;btn.textContent='Recording…';btn.disabled=true;stopAt=0;
+  try{
+    pv.pause();pv.currentTime=c.s;await once(pv,'seeked');
+    const stream=cap.call(pv);
+    const mt=['video/mp4;codecs=avc1','video/webm;codecs=vp9,opus','video/webm'].find(m=>MediaRecorder.isTypeSupported(m));
+    const rec=new MediaRecorder(stream,mt?{mimeType:mt}:undefined),chunks=[];
+    rec.ondataavailable=e=>e.data.size&&chunks.push(e.data);
+    const done=new Promise(r=>rec.onstop=r);
+    rec.start();await pv.play();
+    await new Promise(r=>{const f=()=>{if(pv.currentTime>=c.e||pv.ended){pv.pause();pv.removeEventListener('timeupdate',f);r()}};pv.addEventListener('timeupdate',f)});
+    rec.stop();await done;
+    const type=rec.mimeType||'video/webm',ext=type.includes('mp4')?'mp4':'webm';
+    const f=new File(chunks,`clip_${fmt(c.s).replace(':','m')}_${c.k}.${ext}`,{type});
+    if(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform()){const P=Capacitor.Plugins,b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(f)});const w=await P.Filesystem.writeFile({path:f.name,data:b64,directory:'CACHE'});await P.Share.share({title:f.name,url:w.uri})}else if(navigator.canShare&&navigator.canShare({files:[f]})){try{await navigator.share({files:[f]})}catch(e){}}
+    else{const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=f.name;a.click()}
+  }catch(e){alert('Could not save this clip: '+e.message)}
+  btn.textContent=old;btn.disabled=false;
+}
+addEventListener('resize',()=>{if(S.rows)drawTL()});
+</script></body></html>

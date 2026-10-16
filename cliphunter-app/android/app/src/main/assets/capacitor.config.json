@@ -1,0 +1,8 @@
+{
+	"appId": "com.yourname.cliphunter",
+	"appName": "ClipHunter",
+	"webDir": "www",
+	"android": {
+		"allowMixedContent": false
+	}
+}
